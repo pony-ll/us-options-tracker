@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美股大额未平仓期权追踪</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="options_data.js"></script>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --panel2:#1c2330; --border:#2a3341;
+    --text:#e6edf3; --muted:#8b98a9; --dim:#5d6b7d;
+    --red:#ff4d4f; --green:#00c853; --blue:#3b9dff; --amber:#ffb020;
+    --purple:#a371f7; --cyan:#22d3ee;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:13px;line-height:1.5}
+  a{color:var(--blue);text-decoration:none}
+  .wrap{max-width:1680px;margin:0 auto;padding:20px 22px 60px}
+  header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;margin-bottom:18px}
+  h1{font-size:21px;margin:0 0 6px;font-weight:650;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:12px}
+  .badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600;
+    background:#1f2a3a;color:var(--blue);border:1px solid #2b3d55;margin-left:8px}
+  .status{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .status .pill{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:6px 11px;color:var(--muted);font-size:11px}
+  .status .pill b{color:var(--text);font-weight:600}
+  .warn-pill{background:#3a2a12!important;border-color:#6b4a18!important;color:var(--amber)!important}
+
+  /* 结论卡 */
+  .tldr{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 17px}
+  .card .k{color:var(--muted);font-size:11px;margin-bottom:7px;letter-spacing:.3px}
+  .card .v{font-size:25px;font-weight:680;line-height:1.1}
+  .card .d{color:var(--dim);font-size:11px;margin-top:7px}
+  .v.red{color:var(--red)} .v.green{color:var(--green)} .v.blue{color:var(--blue)} .v.amber{color:var(--amber)}
+
+  /* 视图切换 */
+  .tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border)}
+  .tab{padding:9px 16px;cursor:pointer;color:var(--muted);font-weight:600;font-size:13px;
+    border-bottom:2px solid transparent;margin-bottom:-1px;transition:.15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+
+  /* 控制面板 */
+  .controls{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+  .ctrl-row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+  .fg{display:flex;flex-direction:column;gap:5px;min-width:120px}
+  .fg label{color:var(--muted);font-size:11px;font-weight:600}
+  .fg select,.fg input[type=text]{background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;outline:none}
+  .fg select:focus,.fg input:focus{border-color:var(--blue)}
+  .fg input[type=range]{width:170px;accent-color:var(--blue)}
+  .range-val{color:var(--amber);font-weight:700;font-variant-numeric:tabular-nums}
+  .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .seg button{background:transparent;border:0;color:var(--muted);padding:7px 13px;cursor:pointer;font-size:12px;font-family:inherit}
+  .seg button.on{background:var(--blue);color:#fff;font-weight:600}
+  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;
+    padding:7px 13px;cursor:pointer;font-size:12px;font-family:inherit}
+  .btn:hover{border-color:var(--blue);color:var(--blue)}
+  .btn.primary{background:#1b3a5c;border-color:#2b5b8f;color:#9fd0ff}
+
+  /* 数据更新状态条 */
+  .livebar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:-4px 0 12px;
+    padding:8px 12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;
+    font-size:11px;color:var(--muted)}
+  .livebar:empty{display:none}
+  .livebar .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 7px var(--green);flex:none}
+  .livebar .dot.busy{background:var(--amber);box-shadow:0 0 7px var(--amber);animation:pulse 1.1s infinite}
+  .livebar .dot.off{background:#4a5568;box-shadow:none}
+  .livebar .dot.err{background:var(--red);box-shadow:0 0 7px var(--red)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .livebar b{color:var(--text)}
+  .livebar .btn{padding:4px 10px;font-size:11px}
+  .livebar .spacer{flex:1}
+  .livebar .errmsg{color:var(--red)}
+
+  /* 自选 chip */
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .chip{background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:14px;
+    padding:4px 11px;cursor:pointer;font-size:11px;user-select:none;transition:.12s}
+  .chip.on{background:#1b3a5c;border-color:var(--blue);color:#cfe6ff}
+  .chip:hover{border-color:var(--blue)}
+
+  /* 图表 */
+  /* 异常 Top5 */
+  .anomaly-head{display:flex;justify-content:space-between;align-items:center;gap:16px;
+    background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:13px 16px;margin-bottom:12px;flex-wrap:wrap}
+  .top5-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-bottom:16px}
+  .a-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
+  .a-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red)}
+  .a-rank{position:absolute;right:12px;top:10px;font-size:26px;font-weight:800;color:#2f3a49;line-height:1}
+  .a-score{font-size:12px;font-weight:700;color:var(--red);background:#3a1418;border-radius:5px;padding:2px 7px;display:inline-block;margin-bottom:7px}
+  .a-title{font-size:17px;font-weight:750;margin-bottom:3px}
+  .a-sub{color:var(--muted);font-size:11px;margin-bottom:10px}
+  .a-metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-bottom:10px}
+  .a-metrics div{background:var(--panel2);border-radius:6px;padding:6px 8px}
+  .a-metrics .k{color:var(--dim);font-size:10px}
+  .a-metrics .v{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+  .a-reasons{display:flex;gap:5px;flex-wrap:wrap}
+  .a-reason{font-size:10px;padding:2px 7px;border-radius:4px;background:#1f2a3a;color:#9fc4ee;border:1px solid #2b3d55}
+
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+  .chart-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .chart-card h3{margin:0 0 4px;font-size:13px;font-weight:650}
+  .chart-card .hint{color:var(--dim);font-size:11px;margin-bottom:8px}
+  .chart{width:100%;height:270px}
+
+  /* 表格 */
+  .table-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .table-head{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;border-bottom:1px solid var(--border)}
+  .table-head h3{margin:0;font-size:14px}
+  .table-head .meta{color:var(--muted);font-size:11px}
+  .tbl-scroll{overflow:auto;max-height:620px}
+  table{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+  thead th{position:sticky;top:0;background:var(--panel2);color:var(--muted);font-weight:600;
+    text-align:right;padding:9px 11px;white-space:nowrap;cursor:pointer;border-bottom:1px solid var(--border);z-index:2}
+  thead th:first-child,tbody td:first-child{text-align:left}
+  thead th:hover{color:var(--blue)}
+  thead th .arrow{color:var(--blue);font-size:10px}
+  tbody td{padding:8px 11px;text-align:right;border-bottom:1px solid #1e2530;white-space:nowrap}
+  tbody tr:hover{background:#1a2230}
+  .sym{font-weight:700;color:var(--text)}
+  .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700}
+  .tag.call{background:#0d2e1f;color:#3ee27a}
+  .tag.put{background:#3a1418;color:#ff6b70}
+  .num-oi{font-weight:700;color:var(--cyan)}
+  .hot{color:var(--red)!important;font-weight:700}
+  .muted{color:var(--dim)}
+  .mny{color:var(--amber)}
+  .dte-0{color:var(--red);font-weight:600}
+  .empty{padding:40px;text-align:center;color:var(--dim)}
+
+  .foot{margin-top:22px;color:var(--dim);font-size:11px;line-height:1.8}
+  .foot b{color:var(--muted)}
+  .disclaimer{margin-top:10px;padding:12px 14px;background:#241a10;border:1px solid #4a3418;
+    border-radius:8px;color:#d9a441;font-size:11px;line-height:1.7}
+  .loading{padding:60px;text-align:center;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>美股大额未平仓期权追踪 <span class="badge">OPEN INTEREST</span></h1>
+    <div class="sub">Nasdaq 公开期权链 · 报价快照 · 自选标的池 + 全市场异常扫描</div>
+  </div>
+  <div class="status" id="status"></div>
+</header>
+
+<div id="liveCtl" class="livebar"></div>
+
+<div id="tldr" class="tldr"></div>
+
+<div class="tabs">
+  <div class="tab active" data-view="watch">自选标的池 · 大额持仓</div>
+  <div class="tab" data-view="scan">全市场异常扫描 · 当日新开仓</div>
+  <div class="tab" data-view="top5">🔥 最异常 Top 5</div>
+</div>
+
+<div id="top5Panel" style="display:none">
+  <div class="anomaly-head">
+    <div>
+      <h3 style="margin:0;font-size:15px">最异常的 5 个合约</h3>
+      <div class="hint" style="color:var(--dim);font-size:11px;margin-top:4px">
+        硬门槛：行权价偏离现价 ≥ <b style="color:var(--amber)" id="devThresholdLabel">50%</b>（越大权重越高） ·
+        <span id="weightHint">评分 = 偏离度 40% + 资金占比 25% + 量/OI 换手 20% + 持仓规模 10% + 临期 5%</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+      <div class="fg">
+        <label>偏离度门槛 ≥</label>
+        <input type="range" id="rngDev" min="10" max="200" step="10" value="50">
+        <span class="range-val" id="rngDevVal">≥ 50%</span>
+      </div>
+      <div class="fg">
+        <label>选取范围</label>
+        <div class="seg" id="segTop5Scope">
+          <button data-v="filtered" class="on">当前筛选内</button>
+          <button data-v="all">全标的池</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="top5Cards" class="top5-grid"></div>
+</div>
+
+<div class="controls">
+  <div class="ctrl-row">
+    <div class="fg">
+      <label>方向</label>
+      <div class="seg" id="segSide">
+        <button data-v="ALL" class="on">全部</button>
+        <button data-v="CALL">CALL</button>
+        <button data-v="PUT">PUT</button>
+      </div>
+    </div>
+    <div class="fg">
+      <label>最小未平仓量 OI</label>
+      <input type="range" id="rngOI" min="0" max="50000" step="500" value="10000">
+      <span class="range-val" id="rngOIVal">≥ 10,000 张</span>
+    </div>
+    <div class="fg">
+      <label>成交量/OI 倍数 ≥</label>
+      <input type="range" id="rngRatio" min="0" max="30" step="1" value="0">
+      <span class="range-val" id="rngRatioVal">不限</span>
+    </div>
+    <div class="fg">
+      <label>最小资金占比</label>
+      <select id="selNotional">
+        <option value="0">不限</option>
+        <option value="0.001">≥ 0.1%</option>
+        <option value="0.003">≥ 0.3%</option>
+        <option value="0.005" selected>≥ 0.5%</option>
+        <option value="0.01">≥ 1%</option>
+        <option value="0.02">≥ 2%</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label>到期日</label>
+      <select id="selExpiry"><option value="ALL">全部</option></select>
+    </div>
+    <div class="fg" style="flex:1;min-width:150px">
+      <label>搜索标的 / 行权价</label>
+      <input type="text" id="txtSearch" placeholder="如 NVDA / 420 / TSLA 250">
+    </div>
+    <button class="btn" id="btnReset">重置筛选</button>
+  </div>
+
+  <div class="chips" id="chips"></div>
+</div>
+
+<div class="charts">
+  <div class="chart-card">
+    <h3>未平仓量 Top 15 合约</h3>
+    <div class="hint">当前筛选下 OI 最大的合约（标注方向）</div>
+    <div id="chartTop" class="chart"></div>
+  </div>
+  <div class="chart-card">
+    <h3>CALL / PUT 未平仓分布</h3>
+    <div class="hint">按方向汇总 OI 与合约数</div>
+    <div id="chartSide" class="chart"></div>
+  </div>
+  <div class="chart-card">
+    <h3>标的未平仓量排行</h3>
+    <div class="hint">当前筛选下各标的 OI 合计</div>
+    <div id="chartSym" class="chart"></div>
+  </div>
+  <div class="chart-card">
+    <h3>到期日 OI 分布</h3>
+    <div class="hint">按到期日汇总 OI（观察期限结构集中点）</div>
+    <div id="chartExp" class="chart"></div>
+  </div>
+</div>
+
+<div class="table-card">
+  <div class="table-head">
+    <h3 id="tableTitle">大额未平仓合约明细</h3>
+    <div class="meta" id="tableMeta"></div>
+  </div>
+  <div class="tbl-scroll">
+    <table id="tbl">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="foot" id="foot"></div>
+
+</div>
+
+<script>
+"use strict";
+(function () {
+  var D = window.OPTIONS_DATA;
+  if (!D) {
+    document.getElementById("status").innerHTML = '<div class="pill warn-pill">数据文件缺失，请先运行 <b>python fetch_options.py</b></div>';
+    return;
+  }
+
+  var M = D.meta, SYMS = D.symbols, EXPS = D.expiries, C = D.contracts;
+  // 市场阶段：收盘 / 盘前 / 盘中 / 盘后 / 休市（旧数据文件无此字段时按"收盘"处理）
+  var PHASE = M.marketPhase || "收盘";
+  // 免费源在收盘后数小时内仍可能只提供上一交易日的官方结算数据，两者不一致时需说明
+  var LAG_SETTLE = !!(M.lastSession && M.asOf < M.lastSession);
+  // 剩余天数应从"今天"算：数据日可能落后（收盘结算数据未发布），不能拿旧数据日当基准
+  var ET_TODAY = (function () {
+    try {
+      return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    } catch (e) { return M.asOf; }
+  })();
+  var DTE_BASE = ET_TODAY > M.asOf ? ET_TODAY : M.asOf;
+
+  // 展开紧凑数据为对象(前端只做一次)
+  var rows = C.map(function (c) {
+    var s = SYMS[c[0]];
+    return {
+      symbol: s.s, assetClass: s.a, underlying: s.p,
+      side: c[1] === 0 ? "CALL" : "PUT",
+      expiry: EXPS[c[2]], strike: c[3], oi: c[4], volume: c[5],
+      last: c[6], bid: c[7], ask: c[8],
+      notional: c[4] * 100 * c[3],
+      volOi: c[4] ? c[5] / c[4] : 0,
+      dte: Math.round((new Date(EXPS[c[2]]) - new Date(DTE_BASE)) / 86400000)
+    };
+  });
+
+  // 资金量占比 = 单个合约名义额 / 该标的所有合约名义额之和（标的内部占比，跨标的可比）
+  var symNotionalTotal = {};
+  rows.forEach(function (r) {
+    symNotionalTotal[r.symbol] = (symNotionalTotal[r.symbol] || 0) + r.notional;
+  });
+  rows.forEach(function (r) {
+    var tot = symNotionalTotal[r.symbol] || 0;
+    r.notionalShare = tot > 0 ? r.notional / tot : 0;
+  });
+
+  var selected = {};          // 自选标的池
+  SYMS.forEach(function (s) { selected[s.s] = true; });
+  var view = "watch";         // watch | scan
+  var sideFilter = "ALL";
+  var sortKey = "oi", sortDir = -1;
+  var charts = {};
+
+  function fmt(n) {
+    if (n === 0 || !n) return "0";
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+    return String(Math.round(n));
+  }
+  function fmtFull(n) { return Math.round(n).toLocaleString("en-US"); }
+  function fmtMoney(n) {
+    if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+    if (n >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return "$" + (n / 1e3).toFixed(0) + "K";
+    return "$" + Math.round(n);
+  }
+
+  // 状态栏
+  // asOf 是「持仓量的结算交易日」，不是抓取时刻：Nasdaq 免费源在收盘后要过数小时
+  // 才发布当日清算数据，这段时间 asOf 会停在上一交易日，必须如实标注，不能假装是最新。
+  document.getElementById("status").innerHTML =
+    '<div class="pill' + (LAG_SETTLE ? " warn-pill" : "") + '">持仓结算日 <b>' + M.asOf + '</b>' +
+      (LAG_SETTLE ? ' · ' + M.lastSession + ' 的清算数据待源端发布' : '') + '</div>' +
+    '<div class="pill">抓取 <b>' + M.fetchedAt + '</b>（' + PHASE + '）</div>' +
+    '<div class="pill">标的 <b>' + M.symbolsCount + '</b> · 合约 <b>' + fmtFull(M.contractCount) + '</b></div>' +
+    '<div class="pill warn-pill">免费源快照 · 非实时逐笔大单流</div>';
+
+  // 结论卡
+  function renderTLDR() {
+    var totalOI = rows.reduce(function (a, r) { return a + r.oi; }, 0);
+    var big = rows.filter(function (r) { return r.oi >= 10000; });
+    var huge = rows.filter(function (r) { return r.oi >= 50000; });
+    var callOI = rows.filter(function (r) { return r.side === "CALL"; }).reduce(function (a, r) { return a + r.oi; }, 0);
+    var putOI = totalOI - callOI;
+    var ratio = callOI && putOI ? (putOI / callOI).toFixed(2) : "—";
+    var maxR = rows.reduce(function (a, r) { return r.oi > a.oi ? r : a; }, rows[0]);
+    document.getElementById("tldr").innerHTML =
+      card("追踪合约总数", fmtFull(rows.length), "OI≥" + fmtFull(M.minOi) + " · " + M.symbolsCount + " 个标的", "blue") +
+      card("大额合约 OI≥1万", fmtFull(big.length), "其中超 5 万张 " + fmtFull(huge.length) + " 条", "red") +
+      card("PUT/CALL 未平仓比", ratio, "看跌/看涨 OI 对比", "amber") +
+      card("最大单合约 OI", fmtFull(maxR.oi), maxR.symbol + " " + maxR.side + " " + maxR.strike + " · " + maxR.expiry, "green");
+  }
+  function card(k, v, d, cls) {
+    return '<div class="card"><div class="k">' + k + '</div><div class="v ' + (cls || "") + '">' + v + '</div><div class="d">' + d + '</div></div>';
+  }
+
+  // 标的 chips
+  function renderChips() {
+    var h = '<span style="color:var(--muted);font-size:11px;align-self:center;margin-right:4px">自选标的</span>';
+    SYMS.forEach(function (s) {
+      h += '<div class="chip' + (selected[s.s] ? " on" : "") + '" data-s="' + s.s + '">' + s.s + '</div>';
+    });
+    h += '<div class="chip" id="chipAll">全选</div><div class="chip" id="chipNone">清空</div>';
+    document.getElementById("chips").innerHTML = h;
+  }
+
+  // 到期日下拉
+  function renderExpirySelect() {
+    var sel = document.getElementById("selExpiry");
+    EXPS.forEach(function (e) {
+      var o = document.createElement("option");
+      o.value = e; o.textContent = e;
+      sel.appendChild(o);
+    });
+  }
+
+  // 表头
+  var COLS = [
+    ["symbol", "标的"], ["side", "方向"], ["expiry", "到期日"], ["dte", "剩余天"],
+    ["strike", "行权价"], ["oi", "未平仓量"], ["volume", "成交量"],
+    ["volOi", "量/OI"], ["last", "权利金"], ["notionalShare", "资金占比"]
+  ];
+  function renderThead() {
+    var cols = (view === "top5") ? [["anomalyScore", "异常分"], ["deviationPct", "偏离现价"]].concat(COLS) : COLS;
+    document.getElementById("thead").innerHTML = cols.map(function (c) {
+      var ar = sortKey === c[0] ? ' <span class="arrow">' + (sortDir === -1 ? "▼" : "▲") + '</span>' : "";
+      return '<th data-k="' + c[0] + '">' + c[1] + ar + '</th>';
+    }).join("");
+  }
+
+  // 筛选逻辑
+  function getFiltered() {
+    var minOI = +document.getElementById("rngOI").value;
+    var minRatio = +document.getElementById("rngRatio").value;
+    var minShare = +document.getElementById("selNotional").value;
+    var exp = document.getElementById("selExpiry").value;
+    var q = document.getElementById("txtSearch").value.trim().toLowerCase();
+    var list = rows.filter(function (r) {
+      if (view === "watch" && !selected[r.symbol]) return false;
+      if (sideFilter !== "ALL" && r.side !== sideFilter) return false;
+      if (r.oi < minOI) return false;
+      if (minRatio > 0 && r.volOi < minRatio) return false;
+      if (r.notionalShare < minShare) return false;
+      if (exp !== "ALL" && r.expiry !== exp) return false;
+      if (q) {
+        var hay = (r.symbol + " " + r.strike + " " + r.expiry).toLowerCase();
+        var toks = q.split(/\s+/);
+        for (var i = 0; i < toks.length; i++) if (hay.indexOf(toks[i]) < 0) return false;
+      }
+      return true;
+    });
+    list.sort(function (a, b) {
+      var av = a[sortKey], bv = b[sortKey];
+      if (typeof av === "string") return sortDir * av.localeCompare(bv);
+      return sortDir * (av - bv);
+    });
+    return list;
+  }
+
+  // ===== 异常评分模型（用户口径 + 可解释补充）=====
+  // 硬门槛: 行权价相对现价偏离 >= 50% (用户指定条件,不满足直接排除)
+  // 权重集中于 WEIGHTS, 界面文案与计算结果都由它生成, 避免两处漂移
+  //   · 偏离度: 50%→0分, 200%→满分, 线性, 越大权重越高(用户要求)
+  //   · 资金量占比: 该合约名义额 / 该标的所有合约名义额之和(标的内部占比), 池内分位
+  //   · 量/OI: 池内分位, 当日新开仓异动
+  //   · 持仓规模 OI: 池内分位
+  //   · 临期: -dte 池内分位, 越近越高
+  var WEIGHTS = {
+    dev: 0.40,    // 偏离度(用户核心口径,保持最高)
+    share: 0.25,  // 资金量占比(已上调,现为第二权重)
+    volOi: 0.20,  // 量/OI 换手
+    oi: 0.10,     // 持仓规模(与资金占比高度相关,让出权重)
+    dte: 0.05     // 临近到期
+  };
+  function wpct(k) { return Math.round(WEIGHTS[k] * 100) + "%"; }
+  function weightText() {
+    return "偏离度 " + wpct("dev") +
+      " + 资金占比 " + wpct("share") +
+      " + 量/OI 换手 " + wpct("volOi") +
+      " + 持仓规模 " + wpct("oi") +
+      " + 临期 " + wpct("dte");
+  }
+  function pctRank(sortedAsc, v) {
+    if (!sortedAsc.length) return 0;
+    var lo = 0, hi = sortedAsc.length;
+    while (lo < hi) { var mid = (lo + hi) >>> 1; if (sortedAsc[mid] < v) lo = mid + 1; else hi = mid; }
+    return lo / Math.max(sortedAsc.length - 1, 1);
+  }
+  function deviation(r) {
+    if (!r.underlying || r.underlying <= 0) return 0;
+    return Math.abs(r.strike - r.underlying) / r.underlying;
+  }
+  function scoreAnomalies(list, minDev) {
+    var threshold = (minDev === undefined ? 50 : minDev) / 100;
+    // 用户条件: 偏离 >= 阈值 才入选
+    var pool = list.filter(function (r) { return deviation(r) >= threshold; });
+    if (!pool.length) return [];
+    var volArr = pool.map(function (r) { return r.volOi; }).sort(function (a, b) { return a - b; });
+    var oiArr = pool.map(function (r) { return r.oi; }).sort(function (a, b) { return a - b; });
+    var notArr = pool.map(function (r) { return r.notionalShare; }).sort(function (a, b) { return a - b; });
+    var dteArr = pool.map(function (r) { return -r.dte; }).sort(function (a, b) { return a - b; });
+    return pool.map(function (r) {
+      var dev = deviation(r);
+      var pd0 = Math.min(Math.max((dev - threshold) / (2 - threshold), 0), 1); // 50%→0, 200%→1
+      var pv = pctRank(volArr, r.volOi);
+      var po = pctRank(oiArr, r.oi);
+      var pn = pctRank(notArr, r.notionalShare);
+      var pdt = pctRank(dteArr, -r.dte);
+      var score = 100 * (WEIGHTS.dev * pd0 + WEIGHTS.share * pn + WEIGHTS.volOi * pv +
+                          WEIGHTS.oi * po + WEIGHTS.dte * pdt);
+      var reasons = [];
+      reasons.push("偏离 " + (dev * 100).toFixed(0) + "%");
+      if (pd0 >= 0.5) reasons.push("深度价外/价内");
+      if (r.volume === 0 || r.volOi < 0.05) reasons.push("⚠ 当日低活跃");
+      if (pn >= 0.80) reasons.push("资金占比 " + (r.notionalShare * 100).toFixed(1) + "%");
+      // 换手异动需同时满足"池内分位靠前"与"绝对换手不为零"，否则低换手池里也会误标为异动
+      if (pv >= 0.80 && r.volOi >= 0.5) reasons.push("换手异动 " + r.volOi.toFixed(1) + "×");
+      if (po >= 0.80) reasons.push("持仓居前 " + fmt(r.oi) + "张");
+      if (pdt >= 0.80) reasons.push("临近到期 " + r.dte + "天");
+      return Object.assign({}, r, {
+        anomalyScore: Math.round(score * 10) / 10,
+        deviationPct: Math.round(dev * 1000) / 10,
+        reasons: reasons
+      });
+    }).sort(function (a, b) { return b.anomalyScore - a.anomalyScore; });
+  }
+
+  function renderTop5(list) {
+    var minDev = +document.getElementById("rngDev").value;
+    var scored = scoreAnomalies(list, minDev).slice(0, 5);
+    var h = "";
+    scored.forEach(function (r, i) {
+      var otm = (r.side === "CALL" && r.strike > r.underlying) || (r.side === "PUT" && r.strike < r.underlying);
+      h += '<div class="a-card">' +
+        '<div class="a-rank">' + (i + 1) + '</div>' +
+        '<div class="a-score">异常分 ' + r.anomalyScore.toFixed(1) + '</div>' +
+        '<div class="a-title">' + r.symbol + ' <span class="tag ' + (r.side === "CALL" ? "call" : "put") + '">' + r.side + '</span> ' +
+          '<span class="tag" style="background:#2a2038;color:#c9a2ff">' + (otm ? "价外" : "价内") + '</span></div>' +
+        '<div class="a-sub">行权价 ' + r.strike.toFixed(2) + ' · 现价 ' + r.underlying.toFixed(2) + ' · 到期 ' + r.expiry + ' · 剩 ' + r.dte + ' 天</div>' +
+        '<div class="a-metrics">' +
+          '<div><div class="k">偏离现价</div><div class="v" style="color:#c9a2ff">' + r.deviationPct.toFixed(0) + '%</div></div>' +
+          '<div><div class="k">资金占比</div><div class="v" style="color:var(--amber);font-weight:700" title="名义额 ' + fmtMoney(r.notional) + '">' + (r.notionalShare * 100).toFixed(1) + '%</div></div>' +
+          '<div><div class="k">未平仓 OI</div><div class="v num-oi">' + fmtFull(r.oi) + '</div></div>' +
+          '<div><div class="k">量/OI</div><div class="v ' + (r.volOi >= 2 ? "hot" : "") + '">' + r.volOi.toFixed(2) + '×</div></div>' +
+        '</div>' +
+        '<div class="a-reasons">' + r.reasons.map(function (x) { return '<span class="a-reason">' + x + '</span>'; }).join("") + '</div>' +
+        '</div>';
+    });
+    document.getElementById("top5Cards").innerHTML = h ||
+      '<div class="empty" style="grid-column:1/-1">当前范围/偏离门槛下无合约，请放宽筛选或降低门槛</div>';
+    return scored;
+  }
+
+  // 表格
+  function renderTable(list, isAnomaly) {
+    var maxShow = 400;
+    var shown = list.slice(0, maxShow);
+    var h = "";
+    shown.forEach(function (r) {
+      var hotVol = r.volOi >= 2 ? " hot" : "";
+      h += "<tr>" +
+        (isAnomaly ? '<td class="num-oi">' + r.anomalyScore.toFixed(1) + '</td>' : '') +
+        (isAnomaly ? '<td style="color:#c9a2ff;font-weight:600">' + r.deviationPct.toFixed(0) + '%</td>' : '') +
+        '<td class="sym">' + r.symbol + '</td>' +
+        '<td><span class="tag ' + (r.side === "CALL" ? "call" : "put") + '">' + r.side + '</span></td>' +
+        '<td>' + r.expiry + '</td>' +
+        '<td class="' + (r.dte <= 7 ? "dte-0" : "muted") + '">' + r.dte + '</td>' +
+        '<td>' + r.strike.toFixed(2) + '</td>' +
+        '<td class="num-oi">' + fmtFull(r.oi) + '</td>' +
+        '<td>' + fmtFull(r.volume) + '</td>' +
+        '<td class="' + hotVol + '">' + r.volOi.toFixed(2) + '</td>' +
+        '<td>' + (r.last ? "$" + r.last.toFixed(2) : '<span class="muted">—</span>') + '</td>' +
+        '<td class="mny" title="名义额 ' + fmtMoney(r.notional) + '">' + (r.notionalShare * 100).toFixed(2) + '%</td>' +
+        "</tr>";
+    });
+    document.getElementById("tbody").innerHTML = h ||
+      '<tr><td colspan="' + (isAnomaly ? 12 : 10) + '" class="empty">当前筛选无匹配合约，请放宽阈值</td></tr>';
+    document.getElementById("tableTitle").textContent =
+      isAnomaly ? "异常 Top 5 明细（偏离≥" + document.getElementById("rngDev").value + "% · 按异常分降序）" :
+      (view === "watch" ? "自选标的 · 大额未平仓合约明细" : "全市场扫描 · 当日新开仓异动（按量/OI 排序）");
+    document.getElementById("tableMeta").textContent =
+      "匹配 " + fmtFull(list.length) + " 条" + (list.length > maxShow ? " · 显示前 " + maxShow + " 条" : "") +
+      " · 按" + colName(sortKey) + (sortDir === -1 ? "降序" : "升序");
+  }
+  function colName(k) {
+    for (var i = 0; i < COLS.length; i++) if (COLS[i][0] === k) return COLS[i][1];
+    return k;
+  }
+
+  // 图表
+  function initCharts() {
+    ["chartTop", "chartSide", "chartSym", "chartExp"].forEach(function (id) {
+      charts[id] = echarts.init(document.getElementById(id), "dark");
+    });
+    window.addEventListener("resize", function () {
+      Object.keys(charts).forEach(function (k) { charts[k].resize(); });
+    });
+  }
+  var axisStyle = { axisLine: { lineStyle: { color: "#3a4453" } }, axisLabel: { color: "#8b98a9", fontSize: 10 } };
+
+  function renderCharts(list) {
+    // Top15 OI
+    var top = list.slice().sort(function (a, b) { return b.oi - a.oi; }).slice(0, 15).reverse();
+    charts.chartTop.setOption({
+      backgroundColor: "transparent",
+      grid: { left: 105, right: 55, top: 8, bottom: 22 },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" },
+        formatter: function (p) {
+          var r = top[p[0].dataIndex];
+          return r.symbol + " " + r.side + " K=" + r.strike + "<br/>OI " + fmtFull(r.oi) +
+            " · " + r.expiry + "<br/>资金占比 " + (r.notionalShare * 100).toFixed(2) + "%";
+        } },
+      xAxis: Object.assign({ type: "value" }, axisStyle, { splitLine: { lineStyle: { color: "#222b38" } } }),
+      yAxis: Object.assign({ type: "category", data: top.map(function (r) { return r.symbol + " " + r.side[0] + r.strike; }) }, axisStyle),
+      series: [{ type: "bar", data: top.map(function (r) {
+        return { value: r.oi, itemStyle: { color: r.side === "CALL" ? "#00c853" : "#ff4d4f", borderRadius: [0, 3, 3, 0] } };
+      }), barMaxWidth: 14, label: { show: true, position: "right", color: "#c9d4e2", fontSize: 10,
+        formatter: function (p) { return fmt(p.value); } } }]
+    }, true);
+
+    // CALL/PUT 分布
+    var callO = 0, putO = 0, callN = 0, putN = 0;
+    list.forEach(function (r) {
+      if (r.side === "CALL") { callO += r.oi; callN++; } else { putO += r.oi; putN++; }
+    });
+    charts.chartSide.setOption({
+      backgroundColor: "transparent",
+      tooltip: { trigger: "item", formatter: "{b}: {c} ({d}%)" },
+      legend: { bottom: 0, textStyle: { color: "#8b98a9", fontSize: 11 } },
+      series: [
+        { name: "按 OI", type: "pie", radius: ["22%", "46%"], center: ["50%", "44%"],
+          label: { color: "#c9d4e2", fontSize: 11, formatter: "{b}\n{d}%" },
+          data: [{ name: "CALL OI", value: callO, itemStyle: { color: "#00c853" } },
+                 { name: "PUT OI", value: putO, itemStyle: { color: "#ff4d4f" } }] },
+        { name: "按合约数", type: "pie", radius: ["52%", "68%"], center: ["50%", "44%"],
+          label: { show: false },
+          data: [{ name: "CALL 数", value: callN, itemStyle: { color: "#1e8a4a" } },
+                 { name: "PUT 数", value: putN, itemStyle: { color: "#b82e34" } }] }
+      ]
+    }, true);
+
+    // 标的 OI 排行
+    var bySym = {};
+    list.forEach(function (r) { bySym[r.symbol] = (bySym[r.symbol] || 0) + r.oi; });
+    var sa = Object.keys(bySym).map(function (k) { return [k, bySym[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 12).reverse();
+    charts.chartSym.setOption({
+      backgroundColor: "transparent",
+      grid: { left: 55, right: 60, top: 8, bottom: 22 },
+      tooltip: { trigger: "axis", formatter: function (p) { return p[0].name + " OI " + fmtFull(p[0].value); } },
+      xAxis: Object.assign({ type: "value" }, axisStyle, { splitLine: { lineStyle: { color: "#222b38" } },
+        axisLabel: { color: "#8b98a9", fontSize: 10, formatter: function (v) { return fmt(v); } } }),
+      yAxis: Object.assign({ type: "category", data: sa.map(function (x) { return x[0]; }) }, axisStyle),
+      series: [{ type: "bar", data: sa.map(function (x) { return x[1]; }), barMaxWidth: 14,
+        itemStyle: { color: "#3b9dff", borderRadius: [0, 3, 3, 0] },
+        label: { show: true, position: "right", color: "#c9d4e2", fontSize: 10,
+          formatter: function (p) { return fmt(p.value); } } }]
+    }, true);
+
+    // 到期日 OI 分布
+    var byExp = {};
+    list.forEach(function (r) { byExp[r.expiry] = (byExp[r.expiry] || 0) + r.oi; });
+    var ea = EXPS.filter(function (e) { return byExp[e]; }).map(function (e) { return [e, byExp[e]]; });
+    charts.chartExp.setOption({
+      backgroundColor: "transparent",
+      grid: { left: 60, right: 20, top: 15, bottom: 55 },
+      tooltip: { trigger: "axis", formatter: function (p) { return p[0].name + " OI " + fmtFull(p[0].value); } },
+      xAxis: Object.assign({ type: "category", data: ea.map(function (x) { return x[0].slice(5); }) }, axisStyle,
+        { axisLabel: { color: "#8b98a9", fontSize: 10, rotate: 40 } }),
+      yAxis: Object.assign({ type: "value" }, axisStyle, { splitLine: { lineStyle: { color: "#222b38" } },
+        axisLabel: { color: "#8b98a9", fontSize: 10, formatter: function (v) { return fmt(v); } } }),
+      series: [{ type: "bar", data: ea.map(function (x) { return x[1]; }), barMaxWidth: 30,
+        itemStyle: { color: "#a371f7", borderRadius: [3, 3, 0, 0] } }]
+    }, true);
+  }
+
+  var top5Scope = "filtered";  // filtered | all
+
+  function renderAll() {
+    var isTop5 = (view === "top5");
+    document.getElementById("top5Panel").style.display = isTop5 ? "block" : "none";
+    document.querySelector(".charts").style.display = isTop5 ? "none" : "grid";
+
+    var list = getFiltered();
+    if (isTop5) {
+      // 全标的池口径: 绕过标的池/搜索等筛选,只看方向外的全量合约
+      var pool = top5Scope === "all"
+        ? rows.filter(function (r) { return sideFilter === "ALL" || r.side === sideFilter; })
+        : list;
+      var scored = renderTop5(pool);
+      renderThead();
+      renderTable(scored, true);
+      return;
+    }
+    renderThead();
+    renderTable(list, false);
+    renderCharts(list);
+  }
+
+  // 事件绑定
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.addEventListener("click", function () {
+      document.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("active"); });
+      t.classList.add("active");
+      view = t.getAttribute("data-view");
+      // 全市场扫描视图: 默认按 量/OI 降序,突出当日新开仓异动
+      if (view === "scan") { sortKey = "volOi"; sortDir = -1; }
+      else { sortKey = "oi"; sortDir = -1; }
+      renderAll();
+    });
+  });
+  document.querySelectorAll("#segTop5Scope button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("#segTop5Scope button").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      top5Scope = b.getAttribute("data-v");
+      renderAll();
+    });
+  });
+  document.getElementById("rngDev").addEventListener("input", function () {
+    var v = this.value;
+    document.getElementById("rngDevVal").textContent = "≥ " + v + "%";
+    document.getElementById("devThresholdLabel").textContent = v + "%";
+    var fd = document.getElementById("footDev"); if (fd) fd.textContent = v + "%";
+    renderAll();
+  });
+  document.querySelectorAll("#segSide button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("#segSide button").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      sideFilter = b.getAttribute("data-v");
+      renderAll();
+    });
+  });
+  document.getElementById("rngOI").addEventListener("input", function () {
+    document.getElementById("rngOIVal").textContent = "≥ " + fmtFull(+this.value) + " 张";
+    renderAll();
+  });
+  document.getElementById("rngRatio").addEventListener("input", function () {
+    var v = +this.value;
+    document.getElementById("rngRatioVal").textContent = v === 0 ? "不限" : "≥ " + v + " 倍";
+    renderAll();
+  });
+  document.getElementById("selNotional").addEventListener("change", renderAll);
+  document.getElementById("selExpiry").addEventListener("change", renderAll);
+  document.getElementById("txtSearch").addEventListener("input", renderAll);
+  document.getElementById("thead").addEventListener("click", function (e) {
+    var th = e.target.closest("th");
+    if (!th || view === "top5") return;  // 异常榜按评分固定排序
+    var k = th.getAttribute("data-k");
+    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = k === "symbol" || k === "side" || k === "expiry" ? 1 : -1; }
+    renderAll();
+  });
+  document.getElementById("chips").addEventListener("click", function (e) {
+    var c = e.target;
+    if (c.id === "chipAll") { SYMS.forEach(function (s) { selected[s.s] = true; }); renderChips(); renderAll(); return; }
+    if (c.id === "chipNone") { SYMS.forEach(function (s) { selected[s.s] = false; }); renderChips(); renderAll(); return; }
+    var s = c.getAttribute("data-s");
+    if (s) { selected[s] = !selected[s]; c.classList.toggle("on", selected[s]); renderAll(); }
+  });
+  document.getElementById("btnReset").addEventListener("click", function () {
+    document.getElementById("rngOI").value = 10000;
+    document.getElementById("rngOIVal").textContent = "≥ 10,000 张";
+    document.getElementById("rngRatio").value = 0;
+    document.getElementById("rngRatioVal").textContent = "不限";
+    document.getElementById("selNotional").value = 0.005;
+    document.getElementById("selExpiry").value = "ALL";
+    document.getElementById("txtSearch").value = "";
+    sideFilter = "ALL";
+    view = "watch";
+    sortKey = "oi"; sortDir = -1;
+    top5Scope = "filtered";
+    document.getElementById("rngDev").value = 50;
+    document.getElementById("rngDevVal").textContent = "≥ 50%";
+    document.getElementById("devThresholdLabel").textContent = "50%";
+    var fd0 = document.getElementById("footDev"); if (fd0) fd0.textContent = "50%";
+    document.querySelectorAll("#segTop5Scope button").forEach(function (x) { x.classList.toggle("on", x.getAttribute("data-v") === "filtered"); });
+    document.querySelectorAll("#segSide button").forEach(function (x) { x.classList.toggle("on", x.getAttribute("data-v") === "ALL"); });
+    document.querySelectorAll(".tab").forEach(function (x) { x.classList.toggle("active", x.getAttribute("data-view") === "watch"); });
+    renderAll();
+  });
+
+  // 页脚
+  document.getElementById("foot").innerHTML =
+    '<b>数据来源：</b><a href="' + M.sourceUrl + '" target="_blank">' + M.source + '</a>（免费公开接口） · ' +
+    '抓取时间 ' + M.fetchedAt + '（' + PHASE + '）<br>' +
+    '<b>持仓结算日：</b><b style="color:' + (LAG_SETTLE ? "var(--amber)" : "inherit") + '">' + M.asOf + '</b>' +
+    (M.lastSession ? ' · 最近收盘交易日 ' + M.lastSession : '') +
+    (LAG_SETTLE
+      ? '（该交易日清算数据源端尚未发布，当前为最近可得数据。Nasdaq 免费源不提供持仓量的日期字段，' +
+        '结算日由 OI 内容指纹判定：本次与上次快照比对，' +
+        (typeof M.oiChangeRatio === "number" ? '仅 ' + (M.oiChangeRatio * 100).toFixed(1) + '% 的合约 OI 发生变化，' : '') +
+        '说明源端尚未推送新一天数据）'
+      : '（OI 内容指纹判定：源端已推送该交易日清算数据）') + '<br>' +
+    '<b>口径说明：</b>未平仓量 OI 为各合约未平仓张数；成交量/OI 高表示当日新开仓活跃；' +
+    '<b>资金占比</b> = 该合约名义额 ÷ 该标的所有合约名义额之和（名义额 = OI × 100 × 行权价，为量级粗估，未计入 Delta），' +
+    '即该合约在该股期权资金池中的份额，跨标的可比；悬停可看绝对名义额。<br>' +
+    '<b>异常评分：</b>Top5 硬门槛为行权价偏离现价 ≥ <b style="color:#c9a2ff" id="footDev">50%</b>（滑块可调）；' +
+    '评分 = ' + weightText() + '。偏离度按 50%→0、200%→满分线性映射（越大权重越高），' +
+    '其余信号取池内百分位；"当前筛选内"基于上方筛选条件，"全标的池"忽略标的/搜索筛选仅保留方向。<br>' +
+    '<b>功能边界：</b>免费源为报价快照（盘前/盘中/盘后见状态栏），非实时逐笔大单（block trade）流；如需逐笔异动推送，需接入付费期权流数据源。<br>' +
+    (M.errors && M.errors.length ? '<b>抓取异常：</b>' + M.errors.join("; ") + '<br>' : '') +
+    '<div class="disclaimer"><b>免责声明</b>：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。</div>';
+
+  // ===== 本地服务模式：启动自动更新数据 =====
+  // 走 http(s) 打开时说明由 serve.py 提供服务，可轮询 /api/status 感知后台抓取进度；
+  // 直接双击打开(file://)时退化为纯离线模式，仅提示如何更新。
+  (function initLive() {
+    var bar = document.getElementById("liveCtl");
+    if (!bar) return;
+    if (!/^https?:$/.test(location.protocol)) {
+      bar.innerHTML = '<span class="dot off"></span><span>离线文件模式 · 持仓结算日 <b>' + M.asOf +
+        '</b> · 自动更新需运行 <b>python serve.py</b>（或手动 <b>python fetch_options.py</b>）</span>';
+      return;
+    }
+    var timer = null, reloaded = false;
+
+    function render(s) {
+      var dot = s.refreshing ? "dot busy" : (s.lastError ? "dot err" : "dot");
+      var txt;
+      if (s.refreshing) {
+        txt = '<span>数据更新中（约 1~3 分钟），完成后页面自动刷新…</span>';
+      } else if (s.lastError) {
+        txt = '<span class="errmsg">上次更新失败：' +
+          String(s.lastError).replace(/[<>]/g, "") + '</span>';
+      } else {
+        var tip = String(s.staleReason || "").replace(/"/g, "");
+        txt = '<span' + (s.stale ? ' title="' + tip + '"' : '') + '>本地服务已连接 · 持仓结算日 <b>' + M.asOf +
+          '</b> · 抓取于 ' + M.fetchedAt +
+          (s.stale ? ' · <span style="color:var(--amber)">源端尚无新数据，稍后自动重试</span>' : '') + '</span>';
+      }
+      bar.innerHTML = '<span class="' + dot + '"></span>' + txt + '<span class="spacer"></span>' +
+        '<button class="btn" id="btnLiveRefresh"' + (s.refreshing ? " disabled" : "") + '>⟳ 立即更新数据</button>';
+      var b = document.getElementById("btnLiveRefresh");
+      if (b && !s.refreshing) b.addEventListener("click", trigger);
+    }
+
+    function schedule(ms) { clearTimeout(timer); timer = setTimeout(tick, ms); }
+
+    function tick() {
+      fetch("/api/status", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (s) {
+        render(s);
+        if (s.refreshing) {
+          schedule(2000);                       // 抓取中：高频轮询
+        } else if (!reloaded && s.data && s.data.fetchedAt && s.data.fetchedAt !== M.fetchedAt) {
+          reloaded = true;
+          location.reload();                    // 数据已换新，刷新页面呈现
+        } else {
+          schedule(20000);                      // 空闲：低频心跳，随时可感知服务端更新
+        }
+      }).catch(function () {
+        bar.innerHTML = '<span class="dot off"></span><span>未连上本地服务（可能已停止）· 当前显示本地缓存数据</span>';
+        schedule(15000);
+      });
+    }
+
+    function trigger() {
+      bar.innerHTML = '<span class="dot busy"></span><span>正在触发更新…</span>';
+      fetch("/api/refresh", { method: "POST" }).then(function () {
+        schedule(1200);
+      }).catch(function () { schedule(2000); });
+    }
+
+    tick();
+  })();
+
+  // 启动
+  document.getElementById("weightHint").textContent = "评分 = " + weightText();
+  renderTLDR();
+  renderChips();
+  renderExpirySelect();
+  initCharts();
+  renderAll();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+*.tmp
+
+# Dev screenshots (not part of the app)
+preview_*.png
+
+# OS junk
+Thumbs.db
+.DS_Store
